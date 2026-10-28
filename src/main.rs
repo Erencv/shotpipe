@@ -38,6 +38,13 @@ fn main() {
     std::process::exit(run());
 }
 
+/// Debug logging for the macOS-only clipboard module.
+#[cfg(target_os = "macos")
+]
+fn log_downscale(msg: &str) {
+    eprintln!("[shotpipe downscale] {msg}");
+}
+
 fn run() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
