@@ -51,21 +51,14 @@ def in_rect(x, y, x0, y0, x1, y1):
     return x0 <= x < x1 and y0 <= y < y1
 
 
-def in_triangle(px, py, ax, ay, bx, by, cx, cy):
-    d1 = (px - bx) * (ay - by) - (ax - bx) * (py - by)
-    d2 = (px - cx) * (by - cy) - (bx - cx) * (py - cy)
-    d3 = (px - ax) * (cy - ay) - (cx - ax) * (py - ay)
-    has_neg = d1 < 0 or d2 < 0 or d3 < 0
-    has_pos = d1 > 0 or d2 > 0 or d3 > 0
-    return not (has_neg and has_pos)
-
-
 # ------------------------------------------------------------- drawing -----
 
 def draw_master():
     rgba = bytearray(S * S * 4)
     c = S / 2
-    bi, t, a = 248.0, 58.0, 176.0  # bracket inset, stroke, arm length
+    # Same proportions as the menu bar icon (36px: m=3, t=4, a=10, dot r=4.5)
+    bi, t, a = S * 3 / 36, S * 4 / 36, S * 10 / 36  # bracket inset, stroke, arm
+    dot_r = S * 4.5 / 36
     corners = [(bi, bi, 1, 1), (S - bi, bi, -1, 1),
                (bi, S - bi, 1, -1), (S - bi, S - bi, -1, -1)]
     for y in range(S):
@@ -81,7 +74,7 @@ def draw_master():
             gr = lerp(TOP[1], BOT[1], g) * 255
             b = lerp(TOP[2], BOT[2], g) * 255
             white = False
-            # screenshot brackets
+            # screenshot brackets (menu bar motif)
             for (bx, by, sx, sy) in corners:
                 cx0 = bx if sx > 0 else bx - t
                 cy0 = by if sy > 0 else by - t
@@ -91,10 +84,8 @@ def draw_master():
                         or in_rect(xf, yf, cx0, ay0, cx0 + t, ay1)):
                     white = True
                     break
-            # arrow: shaft + head, centered
-            if in_rect(xf, yf, 330, c - 40, 600, c + 40):
-                white = True
-            if in_triangle(xf, yf, 600, c - 118, 600, c + 118, 742, c):
+            # filled center dot (the "active" state of the menu bar icon)
+            if math.hypot(xf - c, yf - c) <= dot_r:
                 white = True
             if white:
                 rgba[i:i + 3] = b"\xff\xff\xff"
