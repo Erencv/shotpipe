@@ -142,6 +142,75 @@ pub fn cmd_latest(args: &[String]) -> i32 {
     }
 }
 
+/// Resolve a path pasted from the Mac (e.g. /var/folders/.../T/clipboard-*.png,
+/// produced by terminals when you Cmd+V an image) to the synced copy in
+/// ~/shots/. Waits briefly for the sync to land. Prints the local path.
+pub fn cmd_resolve(args: &[String]) -> i32 {
+    let mut path: Option<String> = None;
+    let mut dir: Option<PathBuf> = None;
+    let mut wait_secs: u64 = 8;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--dir" => match it.next() {
+                Some(d) => dir = Some(expand_tilde(Path::new(d))),
+                None => {
+                    eprintln!("shotpipe resolve: --dir needs a path");
+                    return 2;
+                }
+            },
+            "--wait" => match it.next().and_then(|v| v.parse().ok()) {
+                Some(w) => wait_secs = w,
+                None => {
+                    eprintln!("shotpipe resolve: --wait needs seconds");
+                    return 2;
+                }
+            },
+            other if path.is_none() => path = Some(other.to_string()),
+            other => {
+                eprintln!("shotpipe resolve: unexpected argument {other}");
+                return 2;
+            }
+        }
+    }
+    let Some(path) = path else {
+        eprintln!("usage: shotpipe resolve <pasted-path> [--dir DIR] [--wait SECS]");
+        return 2;
+    };
+
+    let dir = dir.unwrap_or_else(|| crate::config::home().join("shots"));
+    let base = Path::new(&path)
+        .file_name()
+        .map(|b| b.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.clone());
+    let candidate = dir.join(&base);
+
+    // The paste can race the sync by a couple of seconds; retry.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait_secs);
+    loop {
+        if candidate.exists() {
+            println!("{}", candidate.display());
+            return 0;
+        }
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(400));
+    }
+
+    // Fall back to the newest synced image, noting the substitution.
+    if let Some(p) = newest_image(&dir) {
+                eprintln!("shotpipe resolve: {base} not synced yet; using newest: {}", p.display());
+        println!("{}", p.display());
+        return 0;
+    }
+    eprintln!(
+        "shotpipe resolve: nothing matching {base} in {} after {wait_secs}s",
+        dir.display()
+    );
+    1
+}
+
 fn newest_image(dir: &Path) -> Option<PathBuf> {
     let mut best: Option<(SystemTime, PathBuf)> = None;
     for entry in std::fs::read_dir(dir).ok()? {

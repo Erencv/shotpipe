@@ -30,6 +30,10 @@ USAGE (server):
                       fetch the Mac's current clipboard image, print saved path
   shotpipe latest [--dir ~/shots]
                       print the newest synced screenshot path
+  shotpipe resolve <pasted-path> [--dir DIR] [--wait SECS]
+                      map a Mac path pasted into the terminal (e.g.
+                      /var/folders/.../T/clipboard-*.png) to the synced copy
+                      in ~/shots/ and print it
 
 Config: ~/.config/shotpipe/config.toml (hot-reloaded)
 ";
@@ -65,6 +69,7 @@ fn run() -> i32 {
         }
         Some("in") => client::cmd_in(&args[1..]),
         Some("latest") => client::cmd_latest(&args[1..]),
+        Some("resolve") => client::cmd_resolve(&args[1..]),
         Some("config") => {
             match config::Config::load_or_create() {
                 Ok((_, path)) => {

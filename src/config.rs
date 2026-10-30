@@ -33,6 +33,11 @@ pub struct GeneralCfg {
     /// `screenshot_dir`, so clipboard-only workflows still populate
     /// `latest.png` on every server.
     pub mirror_clipboard: bool,
+    /// Watch macOS temp dirs for terminal paste-images (e.g. iTerm2/Terminal
+    /// write `clipboard-*.png` under /var/folders/.../T/ when you Cmd+V an
+    /// image) and copy them into `screenshot_dir` unchanged, so the pasted
+    /// path resolves on every server via `shotpipe resolve`.
+    pub paste_capture: bool,
     pub downscale: DownscaleCfg,
 }
 
@@ -44,6 +49,7 @@ impl Default for GeneralCfg {
             clipboard_port: 8777,
             token: String::new(),
             mirror_clipboard: true,
+            paste_capture: true,
             downscale: DownscaleCfg::default(),
         }
     }

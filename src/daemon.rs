@@ -3,7 +3,7 @@
 //! macOS only (this is the Mac side of the pipe).
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -185,6 +185,7 @@ pub fn start() -> Arc<Shared> {
 
     spawn(clipboard_server, shared.clone());
     spawn(clipboard_mirror, shared.clone());
+    spawn(temp_paste_watcher, shared.clone());
     spawn(watcher_loop, shared.clone());
     spawn(config_reloader, shared.clone());
     spawn(move |s| command_loop(s, cmd_rx), shared.clone());
@@ -493,6 +494,96 @@ fn clipboard_mirror(shared: Arc<Shared>) {
                 }
                 Err(e) => log(&format!("mirror write failed: {e}")),
             }
+        }
+    }
+}
+
+// ------------------------------------------------- temp paste capture ----
+
+/// When you paste an image into a terminal on the Mac, many terminals save it
+/// to a temp file (~/.../T/clipboard-2026-10-30-235118-44FCE021.png) and paste
+/// the PATH into the remote session. We watch macOS temp dirs for such files
+/// and copy them into the synced folder with the SAME basename, so on the
+/// server `shotpipe resolve <pasted-path>` finds them by name.
+fn temp_paste_watcher(shared: Arc<Shared>) {
+    let (tx, rx) = std::sync::mpsc::channel::<notify::Result<notify::Event>>();
+    let mut watcher = match notify::recommended_watcher(move |res| {
+        let _ = tx.send(res);
+    }) {
+        Ok(w) => w,
+        Err(e) => {
+            log(&format!("paste watcher init failed: {e}"));
+            return;
+        }
+    };
+    let mut watched_any = false;
+    for dir in ["/var/folders", "/tmp", "/private/tmp"] {
+        if Path::new(dir).exists() {
+            match watcher.watch(Path::new(dir), RecursiveMode::Recursive) {
+                Ok(()) => watched_any = true,
+                Err(e) => log(&format!("paste watcher: cannot watch {dir}: {e}")),
+            }
+        }
+    }
+    if !watched_any {
+        return;
+    }
+
+    let is_paste_image = |p: &std::path::Path| -> bool {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| {
+                (n.starts_with("clipboard-") || n.starts_with("image-"))
+                    && matches!(p.extension().and_then(|e| e.to_str()), Some("png" | "jpg" | "jpeg"))
+            })
+            .unwrap_or(false)
+    };
+
+    loop {
+        // First event, then drain briefly to batch.
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+        match rx.recv() {
+            Ok(Ok(ev)) => candidates.extend(ev.paths.iter().filter(|p| is_paste_image(p)).cloned()),
+            Ok(Err(_)) | Err(_) => {}
+        }
+        if rx.recv().is_err() {
+            return;
+        }
+        loop {
+            match rx.recv_timeout(Duration::from_millis(300)) {
+                Ok(Ok(ev)) => {
+                    candidates.extend(ev.paths.iter().filter(|p| is_paste_image(p)).cloned())
+                }
+                Ok(Err(_)) => continue,
+                Err(_) => break,
+            }
+        }
+
+        if shared.is_paused() {
+            continue;
+        }
+        let cfg = shared.cfg.read().unwrap().clone();
+        if !cfg.general.paste_capture {
+            continue;
+        }
+        let dest_dir = cfg.general.screenshot_dir.clone();
+        let mut copied = false;
+        for src in candidates {
+            if !src.is_file() {
+                continue;
+            }
+            let Some(name) = src.file_name() else { continue };
+            let dest = dest_dir.join(name);
+            match std::fs::copy(&src, &dest) {
+                Ok(_) => {
+                    log(&format!("captured paste image {} → {}", src.display(), dest.display()));
+                    copied = true;
+                }
+                Err(e) => log(&format!("paste capture copy failed: {e}")),
+            }
+        }
+        if copied {
+            shared.kick_all(); // push immediately; folder watcher will follow up too
         }
     }
 }
