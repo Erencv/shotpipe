@@ -272,6 +272,106 @@ def draw():
     return out
 
 
+# ------------------------------------------------------------- png decode --
+
+def png_decode_rgba(path):
+    """Minimal PNG decoder: 8-bit RGB/RGBA, non-interlaced (Figma exports)."""
+    data = open(path, "rb").read()
+    pos, idat, w = 8, b"", 0
+    while pos < len(data):
+        ln = struct.unpack(">I", data[pos:pos + 4])[0]
+        typ, ch = data[pos + 4:pos + 8], data[pos + 8:pos + 8 + ln]
+        if typ == b"IHDR":
+            w, h, depth, ct, _, _, inter = struct.unpack(">IIBBBBB", ch[:13])
+            assert depth == 8 and inter == 0 and ct in (2, 6), "need 8-bit RGB/RGBA"
+        elif typ == b"IDAT":
+            idat += ch
+        pos += 12 + ln
+    raw = zlib.decompress(idat)
+    bpp = 4 if ct == 6 else 3
+    stride = w * bpp
+    out = bytearray(w * h * 4)
+    prev = bytearray(stride)
+    p = 0
+    for y in range(h):
+        f = raw[p]
+        p += 1
+        line = bytearray(raw[p:p + stride])
+        p += stride
+        if f == 1:
+            for i in range(bpp, stride):
+                line[i] = (line[i] + line[i - bpp]) & 255
+        elif f == 2:
+            for i in range(stride):
+                line[i] = (line[i] + prev[i]) & 255
+        elif f == 3:
+            for i in range(stride):
+                a = line[i - bpp] if i >= bpp else 0
+                line[i] = (line[i] + ((a + prev[i]) >> 1)) & 255
+        elif f == 4:
+            for i in range(stride):
+                a = line[i - bpp] if i >= bpp else 0
+                b, c = prev[i], prev[i - bpp] if i >= bpp else 0
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                line[i] = (line[i] + pr) & 255
+        prev = line
+        for x in range(w):
+            i, k = x * bpp, (y * w + x) * 4
+            out[k], out[k + 1], out[k + 2] = line[i], line[i + 1], line[i + 2]
+            out[k + 3] = line[i + 3] if ct == 6 else 255
+    return out, w, h
+
+
+def bilinear(src, sw, sh, dw, dh):
+    out = bytearray(dw * dh * 4)
+    for y in range(dh):
+        fy = y * (sh - 1) / max(1, dh - 1)
+        y0, ty = int(fy), fy - int(fy)
+        y1 = min(y0 + 1, sh - 1)
+        for x in range(dw):
+            fx = x * (sw - 1) / max(1, dw - 1)
+            x0, tx = int(fx), fx - int(fx)
+            x1 = min(x0 + 1, sw - 1)
+            k = (y * dw + x) * 4
+            for ch in range(4):
+                a = src[(y0 * sw + x0) * 4 + ch] * (1 - tx) + src[(y0 * sw + x1) * 4 + ch] * tx
+                b = src[(y1 * sw + x0) * 4 + ch] * (1 - tx) + src[(y1 * sw + x1) * 4 + ch] * tx
+                out[k + ch] = int(a * (1 - ty) + b * ty)
+    return out
+
+
+def apply_rounded_mask(rgba, size):
+    C = size / 2
+    for y in range(size):
+        for x in range(size):
+            sd = rr_sd(x + 0.5, y + 0.5, C, C, C, C, 0.2375 * size)
+            if sd > 0.5:
+                rgba[(y * size + x) * 4 + 3] = 0
+            elif sd > -0.5:
+                rgba[(y * size + x) * 4 + 3] = int(rgba[(y * size + x) * 4 + 3] * smooth(0.5, -0.5, sd))
+    return rgba
+
+
+def fit_master(src, sw, sh):
+    """Normalize any square-ish design PNG into a 1024 RGBA master."""
+    if sw != sh:  # letterbox to square, centered
+        side = max(sw, sh)
+        tmp = bytearray(side * side * 4)
+        ox, oy = (side - sw) // 2, (side - sh) // 2
+        for y in range(sh):
+            tmp[((oy + y) * side + ox) * 4:((oy + y) * side + ox + sw) * 4] = src[y * sw * 4:(y + 1) * sw * 4]
+        src, sw, sh = tmp, side, side
+    if sw < S:
+        src = bilinear(src, sw, sh, S, S)
+    elif sw > S:
+        src = downsample(src, sw, S) if sw % S == 0 else bilinear(src, sw, sh, S, S)
+    corners_opaque = all(src[i * 4 + 3] > 250 for i in (3, S - 4, (S - 4) * S + 3, (S - 1) * S + S - 4))
+    if corners_opaque:  # design shipped square; give it macOS corners
+        src = apply_rounded_mask(src, S)
+    return src
+
+
 # ------------------------------------------------------------- resample ----
 
 def downsample(src, sw, dw):
@@ -311,7 +411,13 @@ def paste(dst, src, sw, dw, ox, oy):
 
 def main():
     os.makedirs(ASSETS, exist_ok=True)
-    master = draw()
+    design = os.path.join(ASSETS, "design", "app-icon.png")
+    if os.path.exists(design):
+        src, sw, sh = png_decode_rgba(design)
+        print(f"using provided design app-icon.png ({sw}x{sh})")
+        master = fit_master(src, sw, sh)
+    else:
+        master = draw()
     write_png(os.path.join(ASSETS, "preview-app-icon.png"), master, S, S)
 
     # size-legibility strip
