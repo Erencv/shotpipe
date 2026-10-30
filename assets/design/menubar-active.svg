@@ -1,0 +1,11 @@
+<svg width="288" height="288" viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg">
+  <!-- shotpipe menu bar icon — ACTIVE state (dot filled) -->
+  <!-- single color; macOS renders template icons in both light/dark modes -->
+  <g fill="#000000">
+    <path d="M3 13 V3 H13 V7 H7 V13 Z"/>
+    <path d="M23 3 H33 V13 H29 V7 H23 Z"/>
+    <path d="M3 23 H7 V29 H13 V33 H3 Z"/>
+    <path d="M33 23 V33 H23 V29 H29 V23 Z"/>
+    <circle cx="17.5" cy="17.5" r="4.5"/>
+  </g>
+</svg>
