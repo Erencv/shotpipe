@@ -29,6 +29,10 @@ pub struct GeneralCfg {
     pub clipboard_port: u16,
     /// Optional shared secret; if set, clients must send `X-Shotpipe-Token`.
     pub token: String,
+    /// Watch the clipboard and auto-save any copied image into
+    /// `screenshot_dir`, so clipboard-only workflows still populate
+    /// `latest.png` on every server.
+    pub mirror_clipboard: bool,
     pub downscale: DownscaleCfg,
 }
 
@@ -39,6 +43,7 @@ impl Default for GeneralCfg {
             remote_dir: "shots".into(),
             clipboard_port: 8777,
             token: String::new(),
+            mirror_clipboard: true,
             downscale: DownscaleCfg::default(),
         }
     }

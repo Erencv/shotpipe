@@ -163,9 +163,11 @@ extern "C" fn on_signal(_sig: libc::c_int) {
 
 fn install_signal_handlers() {
     unsafe {
+        // Note: SIGHUP intentionally NOT handled, so `nohup`/disowned
+        // instances survive terminal close; default SIGHUP still applies
+        // to foreground runs (Ctrl-C is SIGINT, handled above).
         libc::signal(libc::SIGTERM, on_signal as libc::sighandler_t);
         libc::signal(libc::SIGINT, on_signal as libc::sighandler_t);
-        libc::signal(libc::SIGHUP, on_signal as libc::sighandler_t);
     }
 }
 
@@ -182,6 +184,7 @@ pub fn start() -> Arc<Shared> {
     respawn_workers(&shared);
 
     spawn(clipboard_server, shared.clone());
+    spawn(clipboard_mirror, shared.clone());
     spawn(watcher_loop, shared.clone());
     spawn(config_reloader, shared.clone());
     spawn(move |s| command_loop(s, cmd_rx), shared.clone());
@@ -248,7 +251,14 @@ fn do_sync(shared: &Arc<Shared>, host: &str, src: &std::path::Path, remote_dir: 
 
     match out {
         Ok(o) if o.status.success() => {
-            let changed = !String::from_utf8_lossy(&o.stdout).trim().is_empty();
+            // Only actual file transfers count as a change. rsync -a also
+            // restores directory mtimes (e.g. after our symlink update
+            // touched the remote dir) and itemize-reports that as "." —
+            // which would otherwise trigger a redundant refresh pass.
+            let changed = String::from_utf8_lossy(&o.stdout).lines().any(|l| {
+                let n = l.trim().trim_end_matches('/');
+                !n.is_empty() && n != "."
+            });
             if changed {
                 refresh_latest_symlink(host, remote_dir);
             }
@@ -269,10 +279,12 @@ fn do_sync(shared: &Arc<Shared>, host: &str, src: &std::path::Path, remote_dir: 
 }
 
 /// Point `latest.png` at the newest image in the remote dir.
-/// Glob-free so it works under any remote shell (zsh aborts on unmatched globs).
+/// Glob-free so it works under any remote shell (zsh aborts on unmatched
+/// globs), and `latest.png` itself is excluded so a refresh can never
+/// re-select the symlink (which would create a self-reference).
 fn refresh_latest_symlink(host: &str, remote_dir: &str) {
     let remote = format!(
-        "cd {dir} && f=$(ls -t 2>/dev/null | grep -Ei '\\.(png|jpe?g|webp|gif)$' | head -n1) && [ -n \"$f\" ] && ln -sfn \"$f\" latest.png",
+        "cd {dir} && f=$(ls -t 2>/dev/null | grep -Ei '\\.(png|jpe?g|webp|gif)$' | grep -Ev '^latest\\.png$' | head -n1) && [ -n \"$f\" ] && ln -sfn \"$f\" latest.png",
         dir = sh_quote(remote_dir)
     );
     let _ = Command::new("ssh")
@@ -445,6 +457,44 @@ fn data_response(png: Vec<u8>) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> 
             tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"image/png"[..]).unwrap(),
         )
         .with_status_code(200)
+}
+
+// ------------------------------------------------- clipboard mirroring ---
+
+/// Watch the Mac clipboard; whenever it changes and holds an image, save it
+/// into the watched screenshots folder. The folder watcher then syncs it to
+/// every enabled server and refreshes `latest.png`. This makes clipboard-only
+/// habits (Cmd+Shift+5 → Cmd+C) work with `shotpipe latest` too.
+fn clipboard_mirror(shared: Arc<Shared>) {
+    // Baseline: don't re-mirror whatever is already on the clipboard at start.
+    let mut last_cc = clipboard::change_count();
+    loop {
+        std::thread::sleep(Duration::from_millis(900));
+        if shared.is_paused() {
+            continue;
+        }
+        let cfg = shared.cfg.read().unwrap().clone();
+        if !cfg.general.mirror_clipboard {
+            continue;
+        }
+        let cc = clipboard::change_count();
+        if cc == last_cc {
+            continue;
+        }
+        last_cc = cc;
+
+        if let Some(png) = clipboard::read_clipboard_png() {
+            let stamp = Local::now().format("%Y%m%d-%H%M%S%.3f").to_string().replace('.', "-");
+            let path = cfg.general.screenshot_dir.join(format!("clip-{stamp}.png"));
+            match std::fs::write(&path, &png) {
+                Ok(()) => {
+                    log(&format!("mirrored clipboard image → {}", path.display()));
+                    shared.kick_all(); // in case FSEvents is slow to notice
+                }
+                Err(e) => log(&format!("mirror write failed: {e}")),
+            }
+        }
+    }
 }
 
 // ------------------------------------------------------------- watcher -----
