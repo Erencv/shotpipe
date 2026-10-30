@@ -4,12 +4,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-cargo build --release
+# SHOTPIPE_BIN lets CI pass a prebuilt (e.g. universal) binary; default: build here.
+BIN="${SHOTPIPE_BIN:-}"
+if [[ -z "$BIN" ]]; then
+  cargo build --release
+  BIN=target/release/shotpipe
+fi
 
 APP="Shotpipe.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp target/release/shotpipe "$APP/Contents/MacOS/Shotpipe"
+cp "$BIN" "$APP/Contents/MacOS/Shotpipe"
 cp assets/Shotpipe.icns "$APP/Contents/Resources/Shotpipe.icns"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'

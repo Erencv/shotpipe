@@ -1,0 +1,66 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Build universal binary
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          mkdir -p target/universal
+          lipo -create \
+            target/aarch64-apple-darwin/release/shotpipe \
+            target/x86_64-apple-darwin/release/shotpipe \
+            -output target/universal/shotpipe
+      - name: Package app
+        run: |
+          SHOTPIPE_BIN=target/universal/shotpipe scripts/make-app.sh
+          ditto -c -k --keepParent Shotpipe.app Shotpipe-macOS-universal.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: Shotpipe-macOS-universal.zip
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --target x86_64-unknown-linux-musl
+      - name: Package
+        run: |
+          cd target/x86_64-unknown-linux-musl/release
+          tar czf ../../../shotpipe-linux-x86_64.tar.gz shotpipe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: shotpipe-linux-x86_64.tar.gz
+
+  release:
+    needs: [macos, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/macos/Shotpipe-macOS-universal.zip
+            dist/linux/shotpipe-linux-x86_64.tar.gz
+          generate_release_notes: true
