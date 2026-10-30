@@ -14,12 +14,13 @@ use chrono::{DateTime, Local};
 use notify::{RecursiveMode, Watcher};
 
 use crate::clipboard;
-use crate::config::{sh_quote, Config, ServerCfg};
+use crate::config::{Config, ServerCfg, sh_quote};
 
 // ---------------------------------------------------------------- state ----
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub enum TunnelState {
+    #[default]
     Off, // clipboard tunnel disabled for this server
     Up,
     Down,
@@ -31,12 +32,6 @@ pub struct ServerStatus {
     pub tunnel_note: String,
     pub last_sync: Option<DateTime<Local>>,
     pub last_error: Option<String>,
-}
-
-impl Default for TunnelState {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 /// Commands the UI (or CLI) can send to the engine.
@@ -151,7 +146,11 @@ fn respawn_workers(shared: &Arc<Shared>) {
 }
 
 pub fn log(msg: impl AsRef<str>) {
-    eprintln!("[shotpipe {}] {}", Local::now().format("%H:%M:%S"), msg.as_ref());
+    eprintln!(
+        "[shotpipe {}] {}",
+        Local::now().format("%H:%M:%S"),
+        msg.as_ref()
+    );
 }
 
 // ---------------------------------------------------------------- start ----
@@ -166,8 +165,8 @@ fn install_signal_handlers() {
         // Note: SIGHUP intentionally NOT handled, so `nohup`/disowned
         // instances survive terminal close; default SIGHUP still applies
         // to foreground runs (Ctrl-C is SIGINT, handled above).
-        libc::signal(libc::SIGTERM, on_signal as libc::sighandler_t);
-        libc::signal(libc::SIGINT, on_signal as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
     }
 }
 
@@ -176,7 +175,9 @@ fn install_signal_handlers() {
 pub fn start() -> Arc<Shared> {
     install_signal_handlers();
     let (cfg, cfg_path) = Config::load_or_create().unwrap_or_else(|e| {
-        log(&format!("config error ({e}); using defaults — fix the file, it hot-reloads"));
+        log(format!(
+            "config error ({e}); using defaults — fix the file, it hot-reloads"
+        ));
         (Config::default(), Config::path())
     });
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
@@ -218,7 +219,12 @@ fn sync_worker(shared: Arc<Shared>, host: String, rx: Receiver<()>, gen_id: u64)
         if !server.enabled || !server.sync {
             continue;
         }
-        do_sync(&shared, &host, &cfg.general.screenshot_dir, &cfg.effective_remote_dir(&server));
+        do_sync(
+            &shared,
+            &host,
+            &cfg.general.screenshot_dir,
+            &cfg.effective_remote_dir(&server),
+        );
     }
 }
 
@@ -271,7 +277,9 @@ fn do_sync(shared: &Arc<Shared>, host: &str, src: &std::path::Path, remote_dir: 
         Ok(o) => {
             let err = String::from_utf8_lossy(&o.stderr);
             let err = err.lines().last().unwrap_or("rsync failed").to_string();
-            shared.set_status(host, |st| st.last_error = Some(err.chars().take(120).collect()));
+            shared.set_status(host, |st| {
+                st.last_error = Some(err.chars().take(120).collect())
+            });
         }
         Err(e) => {
             shared.set_status(host, |st| st.last_error = Some(format!("rsync: {e}")));
@@ -289,7 +297,14 @@ fn refresh_latest_symlink(host: &str, remote_dir: &str) {
         dir = sh_quote(remote_dir)
     );
     let _ = Command::new("ssh")
-        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, &remote])
+        .args([
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=10",
+            host,
+            &remote,
+        ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
@@ -410,11 +425,13 @@ fn clipboard_server(shared: Arc<Shared>) {
     let server = match tiny_http::Server::http(("127.0.0.1", port)) {
         Ok(s) => s,
         Err(e) => {
-            log(&format!("clipboard server: cannot bind 127.0.0.1:{port}: {e}"));
+            log(format!(
+                "clipboard server: cannot bind 127.0.0.1:{port}: {e}"
+            ));
             return;
         }
     };
-    log(&format!("clipboard server on 127.0.0.1:{port}"));
+    log(format!("clipboard server on 127.0.0.1:{port}"));
 
     for request in server.incoming_requests() {
         let method = request.method().clone();
@@ -485,14 +502,17 @@ fn clipboard_mirror(shared: Arc<Shared>) {
         last_cc = cc;
 
         if let Some(png) = clipboard::read_clipboard_png() {
-            let stamp = Local::now().format("%Y%m%d-%H%M%S%.3f").to_string().replace('.', "-");
+            let stamp = Local::now()
+                .format("%Y%m%d-%H%M%S%.3f")
+                .to_string()
+                .replace('.', "-");
             let path = cfg.general.screenshot_dir.join(format!("clip-{stamp}.png"));
             match std::fs::write(&path, &png) {
                 Ok(()) => {
-                    log(&format!("mirrored clipboard image → {}", path.display()));
+                    log(format!("mirrored clipboard image → {}", path.display()));
                     shared.kick_all(); // in case FSEvents is slow to notice
                 }
-                Err(e) => log(&format!("mirror write failed: {e}")),
+                Err(e) => log(format!("mirror write failed: {e}")),
             }
         }
     }
@@ -512,7 +532,7 @@ fn temp_paste_watcher(shared: Arc<Shared>) {
     }) {
         Ok(w) => w,
         Err(e) => {
-            log(&format!("paste watcher init failed: {e}"));
+            log(format!("paste watcher init failed: {e}"));
             return;
         }
     };
@@ -521,7 +541,7 @@ fn temp_paste_watcher(shared: Arc<Shared>) {
         if Path::new(dir).exists() {
             match watcher.watch(Path::new(dir), RecursiveMode::Recursive) {
                 Ok(()) => watched_any = true,
-                Err(e) => log(&format!("paste watcher: cannot watch {dir}: {e}")),
+                Err(e) => log(format!("paste watcher: cannot watch {dir}: {e}")),
             }
         }
     }
@@ -534,7 +554,10 @@ fn temp_paste_watcher(shared: Arc<Shared>) {
             .and_then(|n| n.to_str())
             .map(|n| {
                 (n.starts_with("clipboard-") || n.starts_with("image-"))
-                    && matches!(p.extension().and_then(|e| e.to_str()), Some("png" | "jpg" | "jpeg"))
+                    && matches!(
+                        p.extension().and_then(|e| e.to_str()),
+                        Some("png" | "jpg" | "jpeg")
+                    )
             })
             .unwrap_or(false)
     };
@@ -542,9 +565,8 @@ fn temp_paste_watcher(shared: Arc<Shared>) {
     loop {
         // First event, then drain briefly to batch.
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-        match rx.recv() {
-            Ok(Ok(ev)) => candidates.extend(ev.paths.iter().filter(|p| is_paste_image(p)).cloned()),
-            Ok(Err(_)) | Err(_) => {}
+        if let Ok(Ok(ev)) = rx.recv() {
+            candidates.extend(ev.paths.iter().filter(|p| is_paste_image(p)).cloned())
         }
         if rx.recv().is_err() {
             return;
@@ -572,14 +594,20 @@ fn temp_paste_watcher(shared: Arc<Shared>) {
             if !src.is_file() {
                 continue;
             }
-            let Some(name) = src.file_name() else { continue };
+            let Some(name) = src.file_name() else {
+                continue;
+            };
             let dest = dest_dir.join(name);
             match std::fs::copy(&src, &dest) {
                 Ok(_) => {
-                    log(&format!("captured paste image {} → {}", src.display(), dest.display()));
+                    log(format!(
+                        "captured paste image {} → {}",
+                        src.display(),
+                        dest.display()
+                    ));
                     copied = true;
                 }
-                Err(e) => log(&format!("paste capture copy failed: {e}")),
+                Err(e) => log(format!("paste capture copy failed: {e}")),
             }
         }
         if copied {
@@ -600,27 +628,22 @@ fn watcher_loop(shared: Arc<Shared>) {
     }) {
         Ok(w) => w,
         Err(e) => {
-            log(&format!("watcher init failed: {e}"));
+            log(format!("watcher init failed: {e}"));
             return;
         }
     };
     if let Err(e) = watcher.watch(&src, RecursiveMode::NonRecursive) {
-        log(&format!("cannot watch {}: {e}", src.display()));
+        log(format!("cannot watch {}: {e}", src.display()));
         return;
     }
-    log(&format!("watching {}", src.display()));
+    log(format!("watching {}", src.display()));
 
     loop {
         // Wait for the first event, then drain until quiet (debounce).
         if rx.recv().is_err() {
             return;
         }
-        loop {
-            match rx.recv_timeout(Duration::from_millis(400)) {
-                Ok(_) => continue,
-                Err(_) => break,
-            }
-        }
+        while rx.recv_timeout(Duration::from_millis(400)).is_ok() {}
 
         // Follow screenshot_dir changes without a restart.
         let cfg_dir = shared.cfg.read().unwrap().general.screenshot_dir.clone();
@@ -630,9 +653,9 @@ fn watcher_loop(shared: Arc<Shared>) {
             match watcher.watch(&cfg_dir, RecursiveMode::NonRecursive) {
                 Ok(()) => {
                     src = cfg_dir;
-                    log(&format!("now watching {}", src.display()));
+                    log(format!("now watching {}", src.display()));
                 }
-                Err(e) => log(&format!("cannot watch {}: {e}", cfg_dir.display())),
+                Err(e) => log(format!("cannot watch {}: {e}", cfg_dir.display())),
             }
         }
 
@@ -669,7 +692,7 @@ fn config_reloader(shared: Arc<Shared>) {
                 }
                 shared.touch();
             }
-            Err(e) => log(&format!("config reload failed, keeping previous: {e}")),
+            Err(e) => log(format!("config reload failed, keeping previous: {e}")),
         }
     }
 }
@@ -697,9 +720,12 @@ fn command_loop(shared: Arc<Shared>, cmd_rx: Receiver<Cmd>) {
                 if let Some(on) = now_enabled {
                     let cfg_snapshot = shared.cfg.read().unwrap().clone();
                     if let Err(e) = cfg_snapshot.save(&shared.cfg_path) {
-                        log(&format!("config save failed: {e}"));
+                        log(format!("config save failed: {e}"));
                     }
-                    log(&format!("server {host}: {}", if on { "enabled" } else { "disabled" }));
+                    log(format!(
+                        "server {host}: {}",
+                        if on { "enabled" } else { "disabled" }
+                    ));
                     respawn_workers(&shared);
                     shared.touch();
                 }

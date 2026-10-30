@@ -2,6 +2,12 @@
 name = "shotpipe"
 version = "0.1.0"
 edition = "2024"
+description = "Seamless screenshots and clipboard images from your Mac to your dev servers, for CLI AI agents"
+license = "MIT"
+repository = "https://github.com/erencavus/shotpipe"
+readme = "README.md"
+keywords = ["cli", "ssh", "clipboard", "screenshots", "ai-tools"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 chrono = "0.4.45"

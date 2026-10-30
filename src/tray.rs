@@ -3,8 +3,8 @@
 
 #![allow(deprecated)] // winit `run` + tray set_icon_as_template are deprecated but functional
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -35,10 +35,9 @@ pub fn run() -> i32 {
 
     let tray = TrayIconBuilder::new()
         .with_tooltip("shotpipe")
-        .with_icon(make_icon(false))
         .build()
         .expect("tray icon");
-    let _ = tray.set_icon_as_template(true);
+    let _ = tray.set_icon_templated(Some(make_icon(false)));
 
     let mut menu_version: u64 = 0;
     let mut icon_paused: Option<bool> = None;
@@ -58,19 +57,19 @@ pub fn run() -> i32 {
                     let now = !login_item_installed();
                     let ok = set_login_item(now);
                     daemon::log(if ok {
-                        if now { "login item installed" } else { "login item removed" }
+                        if now {
+                            "login item installed"
+                        } else {
+                            "login item removed"
+                        }
                     } else {
                         "login item change failed"
                     });
                     None
                 }
-                other => {
-                    if let Some(host) = other.strip_prefix("srv:") {
-                        Some(Cmd::ToggleServer(host.to_string()))
-                    } else {
-                        None
-                    }
-                }
+                other => other
+                    .strip_prefix("srv:")
+                    .map(|host| Cmd::ToggleServer(host.to_string())),
             };
             if let Some(cmd) = cmd {
                 let _ = cmd_tx.send(cmd);
@@ -82,15 +81,17 @@ pub fn run() -> i32 {
             if v != menu_version {
                 menu_version = v;
                 if let Some(menu) = build_menu(&shared) {
-                    let _ = tray.set_menu(Some(Box::new(menu)));
+                    tray.set_menu(Some(Box::new(menu)));
                 }
                 let paused = shared.is_paused();
                 if icon_paused != Some(paused) {
                     icon_paused = Some(paused);
-                    let _ = tray.set_icon_with_as_template(Some(make_icon(paused)), true);
+                    let _ = tray.set_icon_templated(Some(make_icon(paused)));
                 }
             }
-            elwt.set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(300)));
+            elwt.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(300),
+            ));
         }
         _ => {}
     });
@@ -109,7 +110,11 @@ fn build_menu(shared: &Arc<Shared>) -> Option<Menu> {
 
     let pause = MenuItem::with_id(
         "pause",
-        if paused { "▶  Resume all" } else { "⏸  Pause all" },
+        if paused {
+            "▶  Resume all"
+        } else {
+            "⏸  Pause all"
+        },
         true,
         None,
     );
@@ -177,25 +182,55 @@ fn build_menu(shared: &Arc<Shared>) -> Option<Menu> {
 
 // --------------------------------------------------------------- icon ------
 
-/// Simple template icon: filled circle when active, hollow ring when paused.
+/// Menu bar icon (template image): screenshot brackets with a filled dot
+/// when active, hollow ring when paused. Matches the app icon motif.
 fn make_icon(active: bool) -> TrayIconIcon {
-    let s = 36usize;
-    let c = (s as f32 - 1.0) / 2.0;
-    let r = c - 2.0;
+    let s = 36usize; // 18pt @2x
+    let m = 3usize; // outer margin
+    let t = 4usize; // stroke thickness
+    let a = 10usize; // bracket arm length
     let mut rgba = vec![0u8; s * s * 4];
+    let in_rect =
+        |x: i32, y: i32, x0: i32, y0: i32, x1: i32, y1: i32| x >= x0 && x < x1 && y >= y0 && y < y1;
+    let lo = m as i32;
+    let hi = (s - m) as i32;
+    let corners = [
+        (lo, lo, 1, 1),
+        (hi, lo, -1, 1),
+        (lo, hi, 1, -1),
+        (hi, hi, -1, -1),
+    ];
+    let c = (s as f32 - 1.0) / 2.0;
     for y in 0..s {
         for x in 0..s {
-            let dx = x as f32 - c;
-            let dy = y as f32 - c;
-            let d = (dx * dx + dy * dy).sqrt();
-            let alpha = if active {
-                if d <= r { 255 } else { 0 }
-            } else {
-                let ring = (d - (r - 2.5)).abs() <= 2.0;
-                if ring && d <= r { 255 } else { 0 }
-            };
-            let i = (y * s + x) * 4;
-            rgba[i + 3] = alpha;
+            let (xi, yi) = (x as i32, y as i32);
+            let mut on = false;
+            for &(bx, by, sx, sy) in &corners {
+                let cx0 = if sx > 0 { bx } else { bx - t as i32 };
+                let cy0 = if sy > 0 { by } else { by - t as i32 };
+                let ax0 = if sx > 0 { bx } else { bx - a as i32 };
+                let ax1 = if sx > 0 { bx + a as i32 } else { bx };
+                let ay0 = if sy > 0 { by } else { by - a as i32 };
+                let ay1 = if sy > 0 { by + a as i32 } else { by };
+                if in_rect(xi, yi, ax0.min(ax1), cy0, ax0.max(ax1), cy0 + t as i32)
+                    || in_rect(xi, yi, cx0, ay0.min(ay1), cx0 + t as i32, ay0.max(ay1))
+                {
+                    on = true;
+                    break;
+                }
+            }
+            // center dot: filled when active, ring when paused
+            let d = ((xi as f32 - c) * (xi as f32 - c) + (yi as f32 - c) * (yi as f32 - c)).sqrt();
+            if active {
+                if d <= 4.5 {
+                    on = true;
+                }
+            } else if (d - 4.2).abs() <= 1.5 {
+                on = true;
+            }
+            if on {
+                rgba[(y * s + x) * 4 + 3] = 255;
+            }
         }
     }
     TrayIconIcon::from_rgba(rgba, s as u32, s as u32).expect("icon")
@@ -204,7 +239,10 @@ fn make_icon(active: bool) -> TrayIconIcon {
 // ----------------------------------------------------------- login item ----
 
 fn plist_path() -> std::path::PathBuf {
-    home().join("Library").join("LaunchAgents").join("com.shotpipe.plist")
+    home()
+        .join("Library")
+        .join("LaunchAgents")
+        .join("com.shotpipe.plist")
 }
 
 fn login_item_installed() -> bool {
@@ -216,9 +254,14 @@ fn login_item_installed() -> bool {
 fn set_login_item(on: bool) -> bool {
     let plist = plist_path();
     if on {
-        let Ok(exe) = std::env::current_exe() else { return false };
+        let Ok(exe) = std::env::current_exe() else {
+            return false;
+        };
         let exe = exe.display().to_string().replace('"', "");
-        let log = std::env::temp_dir().join("shotpipe.log").display().to_string();
+        let log = std::env::temp_dir()
+            .join("shotpipe.log")
+            .display()
+            .to_string();
         let xml = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -22,7 +22,10 @@ pub fn read_clipboard_png() -> Option<Vec<u8>> {
         let tiff = data.to_vec();
         if let Ok(img) = image::load_from_memory(&tiff) {
             let mut png = Vec::new();
-            if img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).is_ok() {
+            if img
+                .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+                .is_ok()
+            {
                 return Some(png);
             }
         }
@@ -63,7 +66,8 @@ pub fn downscale_png(png: Vec<u8>, max_width: u32) -> Vec<u8> {
 }
 
 /// Cache: (change_count, downscale_enabled, max_width) -> processed bytes.
-static CACHE: Mutex<Option<(i64, bool, u32, Vec<u8>)>> = Mutex::new(None);
+type ClipCache = Option<(i64, bool, u32, Vec<u8>)>;
+static CACHE: Mutex<ClipCache> = Mutex::new(None);
 
 #[cfg(test)]
 mod tests {
@@ -109,10 +113,12 @@ mod tests {
 /// Read clipboard and apply downscale config, cached per clipboard state.
 pub fn clipboard_png_processed(downscale: bool, max_width: u32) -> Option<Vec<u8>> {
     let cc = change_count();
-    if let Some((c, d, w, ref bytes)) = *CACHE.lock().unwrap() {
-        if c == cc && d == downscale && w == max_width {
-            return Some(bytes.clone());
-        }
+    if let Some((c, d, w, ref bytes)) = *CACHE.lock().unwrap()
+        && c == cc
+        && d == downscale
+        && w == max_width
+    {
+        return Some(bytes.clone());
     }
     let raw = read_clipboard_png()?;
     let processed = if downscale {

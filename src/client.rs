@@ -55,7 +55,10 @@ pub fn cmd_in(args: &[String]) -> i32 {
     if !token.is_empty() {
         req = req.header("X-Shotpipe-Token", &token);
     }
-    let req = req.config().timeout_global(Some(std::time::Duration::from_secs(20))).build();
+    let req = req
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(20)))
+        .build();
 
     let resp = match req.call() {
         Ok(r) => r,
@@ -90,7 +93,10 @@ pub fn cmd_in(args: &[String]) -> i32 {
         return 1;
     }
 
-    let stamp = Local::now().format("%Y%m%d-%H%M%S%.3f").to_string().replace('.', "-");
+    let stamp = Local::now()
+        .format("%Y%m%d-%H%M%S%.3f")
+        .to_string()
+        .replace('.', "-");
     let path = out_dir.join(format!("clip-{stamp}.png"));
     if let Err(e) = std::fs::write(&path, &bytes) {
         eprintln!("shotpipe in: write {}: {e}", path.display());
@@ -200,7 +206,10 @@ pub fn cmd_resolve(args: &[String]) -> i32 {
 
     // Fall back to the newest synced image, noting the substitution.
     if let Some(p) = newest_image(&dir) {
-                eprintln!("shotpipe resolve: {base} not synced yet; using newest: {}", p.display());
+        eprintln!(
+            "shotpipe resolve: {base} not synced yet; using newest: {}",
+            p.display()
+        );
         println!("{}", p.display());
         return 0;
     }

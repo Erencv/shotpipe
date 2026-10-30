@@ -43,8 +43,7 @@ fn main() {
 }
 
 /// Debug logging for the macOS-only clipboard module.
-#[cfg(target_os = "macos")
-]
+#[cfg(target_os = "macos")]
 fn log_downscale(msg: &str) {
     eprintln!("[shotpipe downscale] {msg}");
 }
@@ -70,18 +69,16 @@ fn run() -> i32 {
         Some("in") => client::cmd_in(&args[1..]),
         Some("latest") => client::cmd_latest(&args[1..]),
         Some("resolve") => client::cmd_resolve(&args[1..]),
-        Some("config") => {
-            match config::Config::load_or_create() {
-                Ok((_, path)) => {
-                    println!("{}", path.display());
-                    0
-                }
-                Err(e) => {
-                    eprintln!("shotpipe config: {e}");
-                    1
-                }
+        Some("config") => match config::Config::load_or_create() {
+            Ok((_, path)) => {
+                println!("{}", path.display());
+                0
             }
-        }
+            Err(e) => {
+                eprintln!("shotpipe config: {e}");
+                1
+            }
+        },
         Some("help") | Some("--help") | Some("-h") => {
             print!("{USAGE}");
             0

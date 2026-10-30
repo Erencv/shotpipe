@@ -4,7 +4,9 @@ Seamless screenshots from your Mac to your dev servers — for people who run
 CLI agents (pi, codex, claude code, opencode…) over SSH.
 
 **Before:** screenshot → save → scp → paste path into the agent.
-**After:** screenshot → tell the agent *"look at my screen"*.
+**After:** just paste the image, or say *"look at my screen"*.
+
+![icon](assets/preview-app-icon.png)
 
 One Rust binary, two roles:
 
@@ -18,27 +20,46 @@ One Rust binary, two roles:
   image or prints the newest synced screenshot path.
 
 ```
-┌────────── macOS ──────────┐            ┌──────── server ─────────┐
-│ ~/Screenshots ──rsync──▶──┼──ssh─────▶ │ ~/shots/                │
-│ (FSEvents watcher)        │            │   └─ latest.png → newest│
-│                           │            │                         │
-│ clipboard ──▶ 127.0.0.1:8777 ─ssh -R─▶ │ 127.0.0.1:8777          │
-│ (NSPasteboard → PNG)      │            │   └─ `shotpipe in`      │
-└───────────────────────────┘            └─────────────────────────┘
+┌────────────── macOS ──────────────┐          ┌──────────── server ────────────┐
+│ ~/Screenshots ───rsync──▶──────────┼──ssh───▶ │ ~/shots/                        │
+│ (FSEvents watcher)                │          │   └─ latest.png → newest        │
+│                                   │          │                                 │
+│ clipboard ──▶ 127.0.0.1:8777 ─ssh -R───────▶ │ 127.0.0.1:8777                  │
+│ (NSPasteboard → PNG)              │          │   └─ `shotpipe in`              │
+│                                   │          │                                 │
+│ paste-image temp files            │          │  `shotpipe resolve <pasted>`    │
+│ (/var/folders/...T/clipboard-*) ─▶│────────▶ │  → ~/shots/<same basename>     │
+└───────────────────────────────────┘          └─────────────────────────────────┘
 ```
+
+Three capture flows, all hands-off:
+
+| What you do on the Mac | What lands on the server |
+|---|---|
+| `Cmd+V` an image into the agent's terminal | the pasted path just works (`shotpipe resolve`) |
+| `Cmd+Shift+5 → Cmd+C` (clipboard only) | `~/shots/clip-*.png` + `latest.png` |
+| `Cmd+Shift+4` / any file in the watched folder | `~/shots/<name>` + `latest.png` |
 
 ## Quick start
 
 ### Mac
+
+Either run the binary directly:
 
 ```bash
 cargo build --release
 # point macOS screenshots at a dedicated folder (one-time)
 mkdir -p ~/Screenshots
 defaults write com.apple.screencapture location ~/Screenshots && killall SystemUIServer
-# run it (a • appears in the menu bar; default config is created at
-# ~/.config/shotpipe/config.toml with your `dev` alias pre-enabled)
+# run it (a menu bar icon appears; default config is created at
+# ~/.config/shotpipe/config.toml with a `dev` server entry to edit)
 ./target/release/shotpipe
+```
+
+Or build a proper app bundle with the icon and drag it into `/Applications`:
+
+```bash
+scripts/make-app.sh   # → Shotpipe.app
 ```
 
 Use **Start at login** in the menu to install a LaunchAgent automatically.
@@ -57,13 +78,23 @@ Nothing to configure on the server: the tunnel is established by the Mac.
 
 ### Tell your agents
 
-Add to `AGENTS.md` / `CLAUDE.md` on the server (and a pi skill if you like):
+Add to `AGENTS.md` / `CLAUDE.md` on the server (and a pi skill if you like —
+[skill template](docs/pi-skill.md)):
 
+> - If I paste a file path that doesn't exist on this machine (usually a Mac
+>   path like `/var/folders/.../T/clipboard-*.png`), run `shotpipe resolve <path>`
+>   and use the path it prints.
 > - `shotpipe in` — saves the image currently on my Mac's clipboard to /tmp and prints the path.
-> - `~/shots/latest.png` — newest auto-synced screenshot (older ones next to it, `ls -t`).
+> - `~/shots/latest.png` — newest synced screenshot (older ones next to it, `ls -t`).
 >
-> When I mention a screenshot or say "look at this", run `shotpipe in` (or read
-> `~/shots/latest.png`), then read the resulting path as an image.
+> When I mention a screenshot or say "look at this", fetch the image with the
+> above, then read the resulting path as an image.
+
+> [!NOTE]
+> The model you point the agent at must accept image inputs. E.g. with the
+> `zai` provider, `glm-5.3` is text-only — use `glm-5.3-flash` (or any
+> vision-capable model) when working with screenshots. Text-only models will
+> read the file but the image content is silently dropped.
 
 ## Config
 
@@ -73,11 +104,13 @@ with `SHOTPIPE_CONFIG_DIR` (used by the tests).
 
 ```toml
 [general]
-screenshot_dir = "~/Screenshots"  # watched folder (follows config changes live)
-remote_dir     = "shots"          # destination, relative to $HOME on the server
-clipboard_port = 8777             # local server + remote forwarded port
-token          = ""               # optional shared secret for the clipboard server
-downscale      = { enabled = true, max_width = 1600 }  # retina → agent-sized PNGs
+screenshot_dir    = "~/Screenshots" # watched folder (follows config changes live)
+remote_dir        = "shots"          # destination, relative to $HOME on the server
+clipboard_port    = 8777             # local server + remote forwarded port
+token             = ""               # optional shared secret for the clipboard server
+mirror_clipboard  = true             # auto-save copied images into the synced folder
+paste_capture     = true             # capture terminal paste-images (/var/folders/...)
+downscale         = { enabled = true, max_width = 1600 }  # retina → agent-sized PNGs
 
 [[servers]]
 host    = "dev"                   # anything ssh accepts: alias, user@host, jumps
@@ -99,7 +132,7 @@ separate `ssh -N -R 8777:127.0.0.1:8777 <host>` connection.
 ## Menu bar
 
 ```
- •  (filled = running, hollow = paused)
+[ ]  screenshot brackets; filled dot = running, hollow ring = paused
  ├─ ⏸ Pause all              # global on/off (kills tunnels, pauses sync)
  ├─ ✓ dev  ·  tunnel ✓ · synced 14:32
  ├─ ✗ box  ·  off
@@ -127,16 +160,24 @@ SHOTPIPE_CONFIG_DIR=/tmp/x ./target/debug/shotpipe daemon   # headless engine
 ```
 
 Verified end-to-end against a real server: initial sync, watcher-triggered
-sync, `latest.png` retargeting, tunnel health, token rejection (401), and
-`shotpipe in` pulling the live Mac clipboard through the tunnel.
+sync, `latest.png` retargeting, tunnel health, token rejection (401),
+`shotpipe in` pulling the live Mac clipboard through the tunnel, clipboard
+mirroring, and `shotpipe resolve` mapping a pasted `/var/folders/...` path
+to the synced copy.
 
 ## Layout
 
 ```
 src/main.rs       dispatch + usage (cross-platform)
 src/config.rs     TOML config, hot-reload-friendly (cross-platform)
-src/client.rs     `in` / `latest` server commands (cross-platform)
+src/client.rs     `in` / `latest` / `resolve` server commands (cross-platform)
 src/clipboard.rs  NSPasteboard → PNG (+TIFF decode, downscale, cache)   [macOS]
-src/daemon.rs     engine: watcher, rsync fan-out, tunnels, HTTP, reload [macOS]
+src/daemon.rs     engine: watchers, rsync fan-out, tunnels, HTTP, reload [macOS]
 src/tray.rs       menu bar icon + menu, login item                       [macOS]
+scripts/make-icons.py  regenerate assets/Shotpipe.icns (pure stdlib)
+scripts/make-app.sh    build Shotpipe.app with icon + ad-hoc signature
 ```
+
+## License
+
+[MIT](LICENSE)

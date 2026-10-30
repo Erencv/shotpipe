@@ -14,7 +14,10 @@ pub struct DownscaleCfg {
 
 impl Default for DownscaleCfg {
     fn default() -> Self {
-        Self { enabled: true, max_width: 1600 }
+        Self {
+            enabled: true,
+            max_width: 1600,
+        }
     }
 }
 
@@ -113,7 +116,8 @@ impl Config {
             cfg.save(&path)?;
             return Ok((cfg, path));
         }
-        let text = fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        let text =
+            fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
         let cfg: Config =
             toml::from_str(&text).map_err(|e| format!("parse {}: {e}", path.display()))?;
         Ok((cfg.normalized(), path))
@@ -130,7 +134,10 @@ impl Config {
     fn default_initial() -> Self {
         Self {
             general: GeneralCfg::default(),
-            servers: vec![ServerCfg { host: "dev".into(), ..ServerCfg::default() }],
+            servers: vec![ServerCfg {
+                host: "dev".into(),
+                ..ServerCfg::default()
+            }],
         }
     }
 
@@ -138,8 +145,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         }
-        let text = toml::to_string_pretty(self)
-            .map_err(|e| format!("serialize config: {e}"))?;
+        let text = toml::to_string_pretty(self).map_err(|e| format!("serialize config: {e}"))?;
         fs::write(path, text).map_err(|e| format!("write {}: {e}", path.display()))
     }
 
