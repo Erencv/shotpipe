@@ -6,8 +6,6 @@ CLI agents (pi, codex, claude code, opencode…) over SSH.
 **Before:** screenshot → save → scp → paste path into the agent.
 **After:** just paste the image, or say *"look at my screen"*.
 
-![icon](assets/preview-app-icon.png)
-
 One Rust binary, two roles:
 
 - **Mac (default / `tray`)** — a menu bar app that:
@@ -89,12 +87,6 @@ Add to `AGENTS.md` / `CLAUDE.md` on the server (and a pi skill if you like —
 >
 > When I mention a screenshot or say "look at this", fetch the image with the
 > above, then read the resulting path as an image.
-
-> [!NOTE]
-> The model you point the agent at must accept image inputs. E.g. with the
-> `zai` provider, `glm-5.3` is text-only — use `glm-5.3-flash` (or any
-> vision-capable model) when working with screenshots. Text-only models will
-> read the file but the image content is silently dropped.
 
 ## Config
 
