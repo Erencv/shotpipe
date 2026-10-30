@@ -6,6 +6,16 @@ CLI agents (pi, codex, claude code, opencode…) over SSH.
 **Before:** screenshot → save → scp → paste path into the agent.
 **After:** just paste the image, or say *"look at my screen"*.
 
+## Install
+
+```bash
+brew install --cask Erencv/tap/shotpipe
+```
+
+Or grab a build from [releases](https://github.com/Erencv/shotpipe/releases):
+[Shotpipe.app (macOS, universal)](../../releases/latest) ·
+[shotpipe-linux-x86_64.tar.gz](../../releases/latest) (for servers).
+
 One Rust binary, two roles:
 
 - **Mac (default / `tray`)** — a menu bar app that:
@@ -42,22 +52,23 @@ Three capture flows, all hands-off:
 
 ### Mac
 
-Either run the binary directly:
+Already installed via brew or a release download? Just launch Shotpipe and do
+the one-time screenshot-folder setup:
+
+```bash
+mkdir -p ~/Screenshots
+defaults write com.apple.screencapture location ~/Screenshots && killall SystemUIServer
+```
+
+A menu bar icon appears on first launch; the default config is created at
+`~/.config/shotpipe/config.toml` with a `dev` server entry to edit.
+
+From source instead:
 
 ```bash
 cargo build --release
-# point macOS screenshots at a dedicated folder (one-time)
-mkdir -p ~/Screenshots
-defaults write com.apple.screencapture location ~/Screenshots && killall SystemUIServer
-# run it (a menu bar icon appears; default config is created at
-# ~/.config/shotpipe/config.toml with a `dev` server entry to edit)
-./target/release/shotpipe
-```
-
-Or build a proper app bundle with the icon and drag it into `/Applications`:
-
-```bash
-scripts/make-app.sh   # → Shotpipe.app
+./target/release/shotpipe            # run the binary directly
+scripts/make-app.sh                   # or build a Shotpipe.app bundle
 ```
 
 Use **Start at login** in the menu to install a LaunchAgent automatically.
