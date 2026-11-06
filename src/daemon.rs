@@ -706,6 +706,9 @@ fn command_loop(shared: Arc<Shared>, cmd_rx: Receiver<Cmd>) {
                 let now_paused = !shared.is_paused();
                 shared.paused.store(now_paused, Ordering::Relaxed);
                 log(if now_paused { "paused" } else { "resumed" });
+                if !now_paused {
+                    shared.kick_all(); // catch up on files saved while paused
+                }
                 shared.touch();
             }
             Cmd::ToggleServer(host) => {
