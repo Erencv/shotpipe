@@ -1,6 +1,6 @@
 [package]
 name = "shotpipe"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Seamless screenshots and clipboard images from your Mac to your dev servers, for CLI AI agents"
 license = "MIT"
